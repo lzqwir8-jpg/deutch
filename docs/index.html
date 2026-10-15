@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="ru">
-<head> 
+<head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Wortschatz-Navigator</title>
@@ -131,6 +131,11 @@ h1 .num{color:var(--ch);margin-right:10px}
 .card .lab .pg{margin-left:auto;font-family:var(--f-mono);font-size:12px;color:var(--muted);font-weight:400}
 .card .de{font-family:var(--f-de);font-size:14px}
 .card .ru{font-size:13px;color:var(--muted)}
+.card.queued{outline:3px solid var(--accent);outline-offset:-1px}
+.pickbar{position:sticky;bottom:0;background:var(--surface);border-top:1px solid var(--line);padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;gap:8px;font-size:13.5px}
+.tl button[aria-pressed="true"]{background:var(--surface);box-shadow:inset 3px 0 0 var(--accent)}
+.pk{display:flex;gap:6px;align-items:center;font-size:13px;color:var(--muted);margin-top:4px;cursor:pointer}
+.pagesrow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:-4px 0 14px;font-size:13.5px;color:var(--muted)}
 .card .acts{display:flex;gap:6px;padding:0 12px 12px}
 .star{color:var(--ch)}
 
@@ -187,6 +192,8 @@ h3{font-size:15px;margin:22px 0 8px;text-transform:uppercase;letter-spacing:.05e
 .viewer .vb .btn{background:#1d2330;color:#fff;border-color:#3a4356}
 .viewer .vi{overflow:auto;display:flex;justify-content:center;padding:0 16px 24px}
 .viewer img{max-width:min(100%,900px);height:auto;background:#fff;border-radius:4px;align-self:flex-start}
+.toast .undo{margin-left:12px;border:0;background:transparent;color:var(--accent);font-weight:700;text-decoration:underline;padding:0}
+:root .toast .undo{color:#9fc0ff}
 .toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:10px 16px;border-radius:9px;font-size:14px;z-index:60;max-width:calc(100% - 32px);box-shadow:0 8px 30px rgba(0,0,0,.25)}
 .hint{font-size:13px;color:var(--muted)}
 .kbd{font-family:var(--f-mono);font-size:11.5px;border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:0 4px;background:var(--surface)}
@@ -206,7 +213,7 @@ h3{font-size:15px;margin:22px 0 8px;text-transform:uppercase;letter-spacing:.05e
 .empty{padding:28px;text-align:center;color:var(--muted);background:var(--surface);border:1px dashed var(--line);border-radius:var(--r)}
 
 @media (max-width:1480px){ .brand span{display:none} }
-@media (max-width:1250px){ .prog{display:none} }
+@media (max-width:1460px){ .prog{display:none} }
 @media (max-width:980px){
   .main{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}
   .tabs{flex-direction:row;overflow-x:auto;overflow-y:hidden;border-right:0;border-bottom:1px solid var(--line);padding:8px max(16px,env(safe-area-inset-left,0px)) 0;gap:4px}
@@ -236,6 +243,7 @@ h3{font-size:15px;margin:22px 0 8px;text-transform:uppercase;letter-spacing:.05e
       <button id="nvMap" aria-pressed="false">Карта книги</button>
       <button id="nvIndex" aria-pressed="false">Указатель</button>
       <button id="nvLessons" aria-pressed="false">Уроки</button>
+      <button id="nvPick" aria-pressed="false">Подборка</button>
     </nav>
     <div class="search">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
@@ -262,7 +270,9 @@ let D=null, TOP=[], BYID={}, CH={};
 const S={lesson:0, lessons:[], view:'topic', cur:'A1', sel:'A1', chapter:'A', tab:'img', mode:'ex', showSol:false, lvl:'all', done:{}, pdf:null, offs:null};
 const $=s=>document.querySelector(s);
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-function toast(msg,ms=2600){document.querySelectorAll('.toast').forEach(x=>x.remove());const t=document.createElement('div');t.className='toast';t.textContent=msg;document.body.appendChild(t);setTimeout(()=>t.remove(),ms)}
+function toast(msg,ms=2600,undo){document.querySelectorAll('.toast').forEach(x=>x.remove());const t=document.createElement('div');t.className='toast';t.textContent=msg;
+  if(undo){const b=document.createElement('button');b.className='undo';b.textContent='Отменить';b.onclick=()=>{t.remove();undo()};t.appendChild(b);ms=Math.max(ms,7000)}
+  document.body.appendChild(t);setTimeout(()=>t.remove(),ms)}
 const lsGet=k=>{try{return JSON.parse(localStorage.getItem(k))}catch(e){return null}};
 const lsSet=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}};
 function ink(hex){const n=parseInt(hex.slice(1),16),r=n>>16,g=n>>8&255,b=n&255;return (0.299*r+0.587*g+0.114*b)>160?'#1b2230':'#ffffff'}
@@ -321,17 +331,33 @@ function applyLocal(op,p){
   if(op==='undone') delete S.done[p.id];
   if(op==='doneNext'){S.done[p.id]={d:today(),l:S.lesson||0,by:CFG.who};const nx=TOP[TOP.indexOf(BYID[p.id])+1];if(nx) S.cur=nx.id}
   if(op==='newLesson'){const n=Math.max(S.lesson||0,...S.lessons.map(l=>l.n),0)+1;S.lessons.push({n,date:today(),note:''});S.lesson=n}
+  if(op==='deleteLesson'){S.lessons=S.lessons.filter(l=>l.n!==p.n);Object.values(S.done).forEach(d=>{if(d.l===p.n)d.l=0});S.lesson=Math.max(0,...S.lessons.map(l=>l.n))}
   if(op==='note'){const l=S.lessons.find(l=>l.n===p.n);if(l) l.note=p.text}
   lsSet('wz-progress',{cur:S.cur,done:S.done,lesson:S.lesson,lessons:S.lessons});
 }
 let queue=Promise.resolve();
+// «Начать урок» сначала только запоминается здесь; в таблицу урок уходит вместе с первой отмеченной темой.
+// Поэтому случайное нажатие отменяется без следа в таблице.
+let PENDING=lsGet('wz-pending');
+const nextLessonNo=()=>Math.max(S.lesson||0,...S.lessons.map(l=>l.n),0)+1;
+function startLesson(){PENDING={date:today()};lsSet('wz-pending',PENDING);render()}
+function cancelPending(){PENDING=null;lsSet('wz-pending',null);render()}
 function op(name,payload){
+  if(PENDING&&(name==='done'||name==='doneNext')){PENDING=null;lsSet('wz-pending',null);op('newLesson')}
   applyLocal(name,payload||{}); render();
   if(SYNC.mode!=='sheet') return;
   queue=queue.then(async()=>{
     try{setSync('busy');const j=await api(name,payload);if(!j.ok) throw new Error(j.error);applyState(j.state);setSync('ok');render()}
     catch(e){setSync('err',errText(e));toast('Не сохранилось в таблицу: '+errText(e)+'. Отметка осталась в этом браузере.',6000)}
   });
+}
+async function deleteLessonSafe(n){
+  const manual=`Удалите урок в таблице: лист «Уроки» — удалите строку урока №${n}; лист «Состояние» — в «Текущий урок №» поставьте предыдущий номер. Сайт подхватит изменения.`;
+  if(SYNC.mode!=='sheet'){applyLocal('deleteLesson',{n});render();toast(`Урок №${n} удалён`);return}
+  try{setSync('busy');const j=await api('deleteLesson',{n});
+    if(!j.ok){ if(j.error==='unknown_action'){setSync('ok');toast(manual,12000);return} throw new Error(j.error) }
+    applyState(j.state);setSync('ok');render();toast(`Урок №${n} удалён. Темы остались пройденными, но без номера урока.`,5000);
+  }catch(e){setSync('err',errText(e));toast('Не получилось: '+errText(e),6000)}
 }
 function lessonOf(id){const d=S.done[id];return d&&d.l?d.l:0}
 function fmtDate(s){const m=/^(\d{4})-(\d\d)-(\d\d)/.exec(s||'');return m?`${m[3]}.${m[2]}.${m[1]}`:(s||'')}
@@ -376,8 +402,10 @@ function renderLessons(){
     const ps=topics.flatMap(t=>t.g.map(g=>g[0]));const pg=ps.length?(Math.min(...ps)===Math.max(...ps)?`S. ${ps[0]}`:`S. ${Math.min(...ps)}–${Math.max(...ps)}`):'';
     return `<section class="lesson"><div class="lh"><h2>${title}</h2><span class="hint">${sub}${pg?' · '+pg:''}</span></div>
     ${topics.length?`<div class="tops">${topics.map(t=>`<button class="mt done" data-goto="${t.id}"><span class="n">${t.id}</span>${esc(t.t)}</button>`).join('')}</div>`:'<p class="hint" style="margin:0">Тем пока не отмечено.</p>'}
-    ${n?`<div class="note"><label for="note${n}" class="hint">Заметка к уроку</label><div class="row"><input id="note${n}" type="text" value="${esc(note)}" placeholder="Что задано, что повторить…"><button class="btn sm" data-note="${n}">Сохранить</button></div></div>`:''}</section>`};
-  $('#view').innerHTML=`<div class="bar"><h1 style="margin:0">Уроки</h1><button class="btn primary" data-act="newlesson">Начать урок №${Math.max(S.lesson||0,...S.lessons.map(l=>l.n),0)+1}</button></div>
+    ${n?`<div class="note"><label for="note${n}" class="hint">Заметка к уроку</label><div class="row"><input id="note${n}" type="text" value="${esc(note)}" placeholder="Что задано, что повторить…"><button class="btn sm" data-note="${n}">Сохранить</button></div>
+      <button class="btn sm" style="margin-top:8px" data-dellesson="${n}">Удалить урок №${n}</button></div>`:''}</section>`};
+  $('#view').innerHTML=`<div class="bar"><h1 style="margin:0">Уроки</h1>${PENDING?`<button class="btn" data-act="cancelpending">Отменить урок №${nextLessonNo()}</button>`:`<button class="btn primary" data-act="newlesson">Начать урок №${nextLessonNo()}</button>`}</div>
+   ${PENDING?`<div class="empty" style="margin-bottom:12px">Урок №${nextLessonNo()} (${fmtDate(PENDING.date)}) начат в этом браузере и появится в таблице вместе с первой отмеченной темой.</div>`:''}
    <p class="summary" style="margin-bottom:16px">Нажмите «Начать урок» в начале занятия. Все темы, отмеченные «пройдено» после этого, попадут в этот урок. В таблице то же самое видно на листе «Уроки».</p>
    ${ls.map(l=>block(`Урок №${l.n}`,fmtDate(l.date)+(l.n===S.lesson?' · текущий':''),TOP.filter(t=>lessonOf(t.id)===l.n),l.note,l.n)).join('')||'<div class="empty">Уроков пока нет. Нажмите «Начать урок».</div>'}
    ${unassigned.length?block('Без номера урока','пройдено до начала учёта уроков',unassigned,'',0):''}`;
@@ -495,6 +523,43 @@ async function copyRegions(regs){
     toast('Картинка в буфере обмена — вставьте на доску (Ctrl/⌘+V)');
   }catch(e){ toast('Браузер не дал скопировать картинку. Используйте «Скачать» или откройте картинку и перетащите её на доску.',5000) }
 }
+// all items at once: one stitched PNG (boards) + separate images as HTML (Docs, Slides, OneNote, Word)
+async function copyAllItems(items){
+  if(!hasBook()){needPdf();return}
+  try{
+    if(!navigator.clipboard||!window.ClipboardItem) throw new Error('no');
+    const regs=items.flatMap(it=>it.regs);
+    const png=drawRegions(regs,1).then(c=>toBlob(c));
+    const html=Promise.all(items.map(it=>drawRegions(it.regs,1).then(c=>c.toDataURL('image/jpeg',0.9))))
+      .then(urls=>new Blob([urls.map((u,i)=>`<p><b>${esc(items[i].label)}</b></p><p><img src="${u}"></p>`).join('')],{type:'text/html'}));
+    try{ await navigator.clipboard.write([new ClipboardItem({'image/png':png,'text/html':html})]); }
+    catch(e){ await navigator.clipboard.write([new ClipboardItem({'image/png':drawRegions(regs,1).then(c=>toBlob(c))})]); }
+    toast(`Скопировано ${items.length} шт.: на доску вставится одной картинкой, в Google Docs/Slides, OneNote, Word — отдельными`,5000);
+  }catch(e){ toast('Браузер не дал скопировать. Используйте «По очереди» или «Скачать файлами».',5000) }
+}
+// one by one: each press puts the next picture into the clipboard
+const QUEUE={key:'',i:0};
+const ctxKey=()=>S.view==='pick'?'pick|'+S.pickKind+'|'+pickChecked().map(i=>i.key).join(','):S.sel+'|'+S.mode;
+async function copyNext(items,key){
+  if(!hasBook()){needPdf();return}
+  key=key||ctxKey(); if(QUEUE.key!==key){QUEUE.key=key;QUEUE.i=0}
+  if(QUEUE.i>=items.length) QUEUE.i=0;
+  const it=items[QUEUE.i];
+  document.querySelectorAll('.card.queued').forEach(c=>c.classList.remove('queued'));
+  const card=document.querySelector(`.card[data-key="${it.key}"]`); if(card){card.classList.add('queued');card.scrollIntoView({block:'nearest',behavior:'smooth'})}
+  try{
+    await navigator.clipboard.write([new ClipboardItem({'image/png':drawRegions(it.regs,1).then(c=>toBlob(c))})]);
+    QUEUE.i++;
+    const b=document.querySelector('[data-act="copynext"],[data-act="pkcopynext"]'); if(b) b.innerHTML=nextLabel(items,key);
+    toast(`${it.label} в буфере (${QUEUE.i}/${items.length}) — Ctrl+V на доске, потом снова «По очереди» или клавиша C`,4000);
+  }catch(e){toast('Браузер не дал скопировать картинку. Используйте «Скачать файлами».',5000)}
+}
+function nextLabel(items,key){key=key||ctxKey();const i=QUEUE.key===key?QUEUE.i:0;return i>=items.length?'По очереди: заново ↺':`По очереди ▶ <span class="mono">${i+1}/${items.length}</span>`}
+async function downloadAllFiles(items){
+  if(!hasBook()){needPdf();return}
+  toast(`Скачиваю ${items.length} файлов… браузер может спросить разрешение на несколько загрузок`,4000);
+  for(const it of items){ const c=await drawRegions(it.regs,1); await saveFile(it.name+'.png',await toBlob(c)); await new Promise(r=>setTimeout(r,350)); }
+}
 async function saveFile(name,blob){
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();
   setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},4000);
@@ -515,6 +580,8 @@ async function zipItems(name,items){
 function needPdf(){toast('Сначала подключите книгу: Google Диск через «Прогресс» вверху или PDF на этом компьютере',4000)}
 function openFile(){$('#file').click()}
 
+function topicPageItems(t){const fn=`${t.id[0]}${String(t.n).padStart(2,'0')}`;return [...new Set(t.g.map(g=>g[0]))].map(p=>({key:'p'+p,name:`${fn}_S${p}_${slug(t.t)}`,label:`Страница ${p}`,page:p,regs:[pageReg(p)]}))}
+function renderTopNav(){ $('#nvPick').innerHTML='Подборка'+(S.picked.size?` <span class="mono" style="font-size:12px">${S.picked.size}</span>`:'') }
 /* items of a topic for the current mode */
 function topicItems(t){
   const base=`${t.id.padStart(1)}`;
@@ -536,12 +603,43 @@ function renderTabs(){
     const n=c.topics.length,d=c.topics.filter(t=>S.done[t.id]).length;
     return `<button class="tab" style="--c:${c.c};--ci:${ink(c.c)}" data-ch="${c.id}" aria-current="${c.id===S.chapter}" title="${esc(c.t)} — пройдено ${d}/${n}">${c.id}<span class="pc"><i style="width:${Math.round(d/n*100)}%"></i></span></button>`}).join('');
 }
+/* ---------- подборка: несколько тем → их страницы ---------- */
+S.picked=new Set(lsGet('wz-picked')||[]); S.pickMode=false; S.pickKind='page'; S.pickOff=new Set();
+const savePicked=()=>lsSet('wz-picked',[...S.picked]);
+function pickedTopics(){return TOP.filter(t=>S.picked.has(t.id))}
+function pickPages(){return [...new Set(pickedTopics().flatMap(t=>t.g.map(g=>g[0])))].sort((a,b)=>a-b)}
+function pickItems(){
+  const ts=pickedTopics();
+  if(S.pickKind==='page') return pickPages().map(p=>{const on=ts.filter(t=>t.g.some(g=>g[0]===p));
+    return {key:'pp'+p,name:`S${String(p).padStart(3,'0')}_${on.map(t=>t.id).join('-')}`,label:`Страница ${p}`,page:p,de:on.map(t=>`${t.id} ${t.t}`).join(' · '),ru:'',regs:[pageReg(p)]}});
+  return ts.map(t=>({key:'pt'+t.id,name:`${t.id[0]}${String(t.n).padStart(2,'0')}_${slug(t.t)}`,label:`${t.id} · ${t.t}`,pages:[...new Set(t.g.map(g=>g[0]))],page:t.g[0]&&t.g[0][0],de:'',ru:'Тема целиком',regs:segRegs(t.g)}));
+}
+const pickChecked=()=>pickItems().filter(it=>!S.pickOff.has(it.key));
+function pickBar(){
+  if(!S.picked.size) return '';
+  return `<div class="pickbar"><div><b>Выбрано тем: ${S.picked.size}</b> · страниц: ${pickPages().length}</div>
+    <div class="row"><button class="btn sm primary" data-act="openpick">Открыть подборку</button><button class="btn sm" data-act="clearpick">Сбросить</button></div></div>`;
+}
+function renderPick(){
+  const ts=pickedTopics();
+  if(!ts.length){$('#view').innerHTML=`<h1 style="margin-top:0">Подборка</h1><div class="empty">Тем не выбрано. Слева нажмите «Выбрать темы», отметьте нужные — и здесь появятся все их страницы.</div>`;return}
+  const items=pickItems(); ITEMS={}; items.forEach(it=>ITEMS[it.key]=it);
+  const on=items.filter(it=>!S.pickOff.has(it.key));
+  $('#view').innerHTML=`${connectPanel()}<div class="bar"><h1 style="margin:0">Подборка</h1><span class="hint">Отмечено ${on.length} из ${items.length}</span></div>
+   <div class="tops" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px">${ts.map(t=>`<span class="mt"><span class="n">${t.id}</span>${esc(t.t)} <button class="btn sm" style="padding:0 6px" data-unpick="${t.id}" aria-label="Убрать ${t.id}">✕</button></span>`).join('')}</div>
+   <div class="bar"><div class="row"><div class="seg" role="group" aria-label="Что копировать"><button data-pickkind="page" aria-pressed="${S.pickKind==='page'}">Целые страницы</button><button data-pickkind="part" aria-pressed="${S.pickKind==='part'}">Только части тем</button></div>
+     <button class="btn sm" data-act="pickon">Отметить все</button><button class="btn sm" data-act="pickoffall">Снять все</button></div>
+    <div class="row"><button class="btn sm" data-act="pkcopyall">Копировать отмеченные</button><button class="btn sm" data-act="pkcopynext">${nextLabel(on)}</button><button class="btn sm" data-act="pkfiles">Скачать файлами</button><button class="btn sm primary" data-act="pkzip">ZIP</button></div></div>
+   <div class="grid">${items.map(it=>imgCard(it,`<label class="pk"><input type="checkbox" data-pickitem="${it.key}" ${S.pickOff.has(it.key)?'':'checked'}> в подборке</label>`)).join('')}</div>
+   <p class="hint" style="margin-top:14px">«Целые страницы» — каждая страница книги один раз, даже если на ней две выбранные темы. «Только части тем» — каждая тема своей картинкой, без соседних тем. Клавиша <span class="kbd">C</span> — следующая отмеченная картинка в буфер.</p>`;
+  bindDrop(); fillThumbs(items);
+}
 function renderList(){
   const c=CH[S.chapter];
   $('#list').innerHTML=`<div class="chhead"><small>Глава ${c.id} · S. ${c.intro}–${c.end}</small><h2>${esc(c.t)}</h2>
-   <button class="introbtn" data-page="${c.intro}">Титульная страница главы</button></div>
-   <ul class="tl">${c.topics.map(t=>`<li><button data-topic="${t.id}" class="${S.done[t.id]?'done':''} ${S.cur===t.id?'here':''}" aria-current="${S.sel===t.id}">
-   <span class="n">${S.done[t.id]?'✓':t.n}</span><span class="tt">${esc(t.t)}${t.s?'<span class="flag b2">★</span>':''}${S.cur===t.id?'<span class="flag here">мы здесь</span>':''}</span><span class="pg">${t.g[0]?t.g[0][0]:''}</span></button></li>`).join('')}</ul>`;
+   <div class="row" style="margin-top:8px"><button class="introbtn" style="margin:0" data-page="${c.intro}">Титульная страница</button><button class="introbtn" style="margin:0${S.pickMode?';background:var(--accent);color:var(--accent-ink);border-color:var(--accent)':''}" data-act="pickmode">${S.pickMode?'Готово':'Выбрать темы'}</button>${S.pickMode?`<button class="introbtn" style="margin:0" data-act="pickchapter">${c.topics.every(t=>S.picked.has(t.id))?'Снять главу':'Вся глава'}</button>`:''}</div></div>
+   <ul class="tl">${c.topics.map(t=>`<li><button ${S.pickMode?`data-pick="${t.id}" aria-pressed="${S.picked.has(t.id)}"`:`data-topic="${t.id}"`} class="${S.done[t.id]?'done':''} ${S.cur===t.id?'here':''}" aria-current="${!S.pickMode&&S.sel===t.id}">
+   <span class="n">${S.pickMode?(S.picked.has(t.id)?'☑':'☐'):(S.done[t.id]?'✓':t.n)}</span><span class="tt">${esc(t.t)}${t.s?'<span class="flag b2">★</span>':''}${S.cur===t.id?'<span class="flag here">мы здесь</span>':''}</span><span class="pg">${t.g[0]?t.g[0][0]:''}</span></button></li>`).join('')}</ul>${pickBar()}`;
 }
 function renderProg(){
   const d=Object.keys(S.done).length;
@@ -556,9 +654,11 @@ function connectPanel(){
 function render(){
   if(!D) return;
   renderTabs(); renderList(); renderProg();
-  ['Topic','Map','Index','Lessons'].forEach(k=>$('#nv'+k).setAttribute('aria-pressed',S.view===k.toLowerCase()));
+  ['Topic','Map','Index','Lessons','Pick'].forEach(k=>$('#nv'+k).setAttribute('aria-pressed',S.view===k.toLowerCase()));
+  $('#nvPick').innerHTML='Подборка'+(S.picked.size?` <span class="mono" style="font-size:12px">${S.picked.size}</span>`:'');
   renderSync();
   if(S.view==='lessons') return renderLessons();
+  if(S.view==='pick') return renderPick();
   if(S.view==='map') return renderMap();
   if(S.view==='index') return renderIndex();
   renderTopic();
@@ -569,7 +669,7 @@ function renderTopic(){
   const nb2=t.ex.filter(e=>e.s).length;
   const tabs=[['img','Картинки',t.ex.length],['words','Слова',t.w.length+t.id_.length+t.ph.length],['rules','Правила и инфо',t.bx.length],['sol','Ответы','']];
   let h=`${connectPanel()}
-  <div class="lessonbar">${S.lesson?`Идёт <b>урок №${S.lesson}</b> (${fmtDate((S.lessons.find(l=>l.n===S.lesson)||{}).date)}) — отмеченные темы попадут в него.`:'Учёт уроков не начат.'}<button class="btn sm" data-act="newlesson">Начать урок №${Math.max(S.lesson||0,...S.lessons.map(l=>l.n),0)+1}</button></div>
+  <div class="lessonbar">${PENDING?`<b>Урок №${nextLessonNo()}</b> начнётся с первой отмеченной темы.<button class="btn sm" data-act="cancelpending">Отменить урок</button>`:S.lesson?`Идёт <b>урок №${S.lesson}</b> (${fmtDate((S.lessons.find(l=>l.n===S.lesson)||{}).date)}) — отмеченные темы попадут в него.`:'Учёт уроков не начат.'}${PENDING?'':`<button class="btn sm" data-act="newlesson">Начать урок №${nextLessonNo()}</button>`}</div>
   <div class="th"><div style="min-width:0">
     <div class="eyebrow"><span class="chip">${c.id}</span>${esc(c.t)}</div>
     <h1><span class="num">${t.n}</span>${esc(t.t)}</h1>
@@ -618,9 +718,10 @@ function paneImages(t,pane){
   const items=topicItems(t); ITEMS={}; items.forEach(it=>ITEMS[it.key]=it);
   pane.innerHTML=`<div class="bar"><div class="seg" role="group" aria-label="Нарезка">
     <button data-mode="ex" aria-pressed="${S.mode==='ex'}">По упражнениям</button><button data-mode="page" aria-pressed="${S.mode==='page'}">Страницы</button><button data-mode="one" aria-pressed="${S.mode==='one'}">Тема целиком</button></div>
-    <div class="row"><button class="btn sm" data-act="copyall">Копировать всё одной картинкой</button><button class="btn sm primary" data-act="zip">Скачать всё (ZIP)</button></div></div>
+    <div class="row"><button class="btn sm" data-act="copyall" title="Одна картинка для доски; в Docs/Slides/OneNote/Word вставятся отдельные">Копировать всё</button><button class="btn sm" data-act="copynext" title="Каждое нажатие (или клавиша C) кладёт в буфер следующую картинку">${nextLabel(items)}</button><button class="btn sm" data-act="files" title="Каждая картинка отдельным файлом — потом выделить все и перетащить на доску">Скачать файлами</button><button class="btn sm primary" data-act="zip">ZIP</button></div></div>
+    ${S.mode!=='page'?`<div class="pagesrow"><span>Целые страницы темы <span class="mono">(${pages(t)})</span>:</span><button class="btn sm" data-act="pgcopy">Копировать все страницы</button><button class="btn sm" data-act="pgnext">По одной странице</button><button class="btn sm" data-act="pgfiles">Скачать страницы</button></div>`:''}
     <div class="grid">${items.map(it=>imgCard(it)).join('')}</div>
-    <p class="hint" style="margin-top:14px">Совет: «Копировать» кладёт картинку в буфер — на доске (Miro, Padlet, OneNote) просто нажмите <span class="kbd">Ctrl</span>+<span class="kbd">V</span>. Стрелки <span class="kbd">←</span> <span class="kbd">→</span> листают темы.</p>`;
+    <p class="hint" style="margin-top:14px">Буфер обмена держит одну картинку за раз. Чтобы перенести на доску все по отдельности: «По очереди» (или клавиша <span class="kbd">C</span>) → <span class="kbd">Ctrl</span>+<span class="kbd">V</span> на доске → снова <span class="kbd">C</span>… Либо «Скачать файлами», выделить все файлы в папке и перетащить на доску разом. Стрелки <span class="kbd">←</span> <span class="kbd">→</span> листают темы.</p>`;
   fillThumbs(items);
 }
 function paneWords(t,pane){
@@ -739,12 +840,18 @@ document.addEventListener('click',async e=>{
   if(ds.ch){S.chapter=ds.ch;renderTabs();renderList();if(innerWidth<=980) $('#list').classList.add('open');return}
   if(ds.openpage){ $('#sr').hidden=true; goto(ds.goto); openPage(+ds.openpage); return }
   if(ds.topic){S.showSol=false;goto(ds.topic);return}
+  if(ds.pick){S.picked.has(ds.pick)?S.picked.delete(ds.pick):S.picked.add(ds.pick);savePicked();renderList();renderTopNav();if(S.view==='pick')renderPick();return}
+  if(ds.unpick){S.picked.delete(ds.unpick);savePicked();render();return}
+  if(ds.pickkind){S.pickKind=ds.pickkind;S.pickOff.clear();renderPick();return}
   if(ds.goto){S.showSol=false;$('#sr').hidden=true;goto(ds.goto,ds.tabto);return}
   if(ds.page){$('#sr').hidden=true;openPage(+ds.page);return}
   if(ds.tab){S.tab=ds.tab;render();return}
   if(ds.mode){S.mode=ds.mode;lsSet('wz-ui',{sel:S.sel,tab:S.tab,mode:S.mode});render();return}
   if(ds.lvl){S.lvl=ds.lvl;render();return}
   if(ds.idx){idxTab=ds.idx;renderIndex();return}
+  if(ds.dellesson){const n=+ds.dellesson;
+    if(el.dataset.armed!=='1'){el.dataset.armed='1';el.textContent=`Точно удалить урок №${n}? Нажмите ещё раз`;setTimeout(()=>{if(el.isConnected){el.dataset.armed='';el.textContent=`Удалить урок №${n}`}},4000);return}
+    deleteLessonSafe(n);return}
   if(ds.note){const n=+ds.note;op('note',{n,text:document.getElementById('note'+n).value.trim()});toast('Заметка сохранена');return}
   if(ds.copy){copyRegions(ITEMS[ds.copy].regs);return}
   if(ds.down){const it=ITEMS[ds.down];downloadRegions(it.name,it.regs);return}
@@ -753,12 +860,29 @@ document.addEventListener('click',async e=>{
   switch(ds.act){
     case 'pick': openFile(); break;
     case 'settings': openSettings(); break;
-    case 'sethere': op('setCur',{id:t.id}); toast(`Отмечено: остановились на ${t.id}`); break;
-    case 'toggledone': op(S.done[t.id]?'undone':'done',{id:t.id}); break;
-    case 'donenext': { const nx=TOP[TOP.indexOf(t)+1]; if(nx){S.sel=nx.id;S.chapter=nx.id[0];S.tab='img'} S.showSol=false; op('doneNext',{id:t.id}); $('#work').scrollTop=0; if(nx) toast(`Дальше: ${nx.id} ${nx.t}`); break; }
-    case 'newlesson': op('newLesson'); toast(`Начат урок №${S.lesson}`); break;
+    case 'sethere': { const prev=S.cur; op('setCur',{id:t.id}); toast(`Отмечено: остановились на ${t.id}`,3000,()=>op('setCur',{id:prev})); break; }
+    case 'toggledone': { const was=!!S.done[t.id]; op(was?'undone':'done',{id:t.id}); toast(was?`Отметка «пройдено» снята с ${t.id}`:`${t.id} отмечена пройденной`,3000,()=>op(was?'done':'undone',{id:t.id})); break; }
+    case 'donenext': { const prevCur=S.cur; const nx=TOP[TOP.indexOf(t)+1]; if(nx){S.sel=nx.id;S.chapter=nx.id[0];S.tab='img'} S.showSol=false; op('doneNext',{id:t.id}); $('#work').scrollTop=0;
+      toast(nx?`${t.id} пройдена. Дальше: ${nx.id} ${nx.t}`:`${t.id} пройдена`,4000,()=>{op('undone',{id:t.id});op('setCur',{id:prevCur});goto(t.id)}); break; }
+    case 'newlesson': { const n=nextLessonNo(); startLesson(); toast(`Урок №${n} начат — он появится в таблице с первой отмеченной темой`,4000,cancelPending); break; }
+    case 'cancelpending': cancelPending(); toast('Урок отменён'); break;
     case 'showsol': S.showSol=true; render(); break;
-    case 'copyall': copyRegions(segRegs(t.g)); break;
+    case 'pickmode': S.pickMode=!S.pickMode; renderList(); if(!S.pickMode&&S.picked.size){S.view='pick';render()} break;
+    case 'pickchapter': { const c=CH[S.chapter]; const all=c.topics.every(x=>S.picked.has(x.id)); c.topics.forEach(x=>all?S.picked.delete(x.id):S.picked.add(x.id)); savePicked(); render(); break; }
+    case 'openpick': S.view='pick'; S.pickMode=false; $('#list').classList.remove('open'); render(); break;
+    case 'clearpick': S.picked.clear(); S.pickOff.clear(); savePicked(); render(); break;
+    case 'pickon': S.pickOff.clear(); renderPick(); break;
+    case 'pickoffall': pickItems().forEach(i=>S.pickOff.add(i.key)); renderPick(); break;
+    case 'pkcopyall': { const its=pickChecked(); if(its.length) copyAllItems(its); else toast('Ничего не отмечено'); break; }
+    case 'pkcopynext': { const its=pickChecked(); if(its.length) copyNext(its); else toast('Ничего не отмечено'); break; }
+    case 'pkfiles': { const its=pickChecked(); if(its.length) downloadAllFiles(its); else toast('Ничего не отмечено'); break; }
+    case 'pkzip': { const its=pickChecked(); if(its.length) zipItems('Podborka_'+pickedTopics().map(x=>x.id).join('-').slice(0,60),its); else toast('Ничего не отмечено'); break; }
+    case 'pgcopy': copyAllItems(topicPageItems(t)); break;
+    case 'pgnext': copyNext(topicPageItems(t),t.id+'|pages'); break;
+    case 'pgfiles': downloadAllFiles(topicPageItems(t)); break;
+    case 'copyall': copyAllItems(topicItems(t)); break;
+    case 'copynext': copyNext(topicItems(t)); break;
+    case 'files': downloadAllFiles(topicItems(t)); break;
     case 'zip': { const its=topicItems(t); zipItems(`${t.id[0]}${String(t.n).padStart(2,'0')}_${slug(t.t)}${S.mode==='page'?'_Seiten':''}`,its); break; }
     case 'copywords': { const txt=t.w.map(w=>`${w[0]} — ${w[1]}`).concat(t.id_.map(w=>`${w[0]} — ${w[1]}`)).join('\n');
       try{await navigator.clipboard.writeText(`${t.id} ${t.t}\n\n${txt}`);toast('Список слов скопирован')}catch(err){toast('Не удалось скопировать текст')} break; }
@@ -770,6 +894,9 @@ $('#nvTopic').onclick=()=>{S.view='topic';render()};
 $('#nvMap').onclick=()=>{S.view='map';render()};
 $('#nvIndex').onclick=()=>{S.view='index';render()};
 $('#nvLessons').onclick=()=>{S.view='lessons';render()};
+$('#nvPick').onclick=()=>{S.view='pick';render()};
+document.addEventListener('change',e=>{const k=e.target.dataset&&e.target.dataset.pickitem;if(!k) return;
+  if(e.target.checked) S.pickOff.delete(k); else S.pickOff.add(k); renderPick()});
 $('#syncPill').onclick=openSettings;
 window.addEventListener('focus',()=>pull(true));
 setInterval(()=>{if(document.visibilityState==='visible') pull(true)},45000);
@@ -782,8 +909,11 @@ $('#q').addEventListener('keydown',e=>{if(e.key==='Escape'){$('#sr').hidden=true
 document.addEventListener('keydown',e=>{
   if(e.target.closest('input,textarea,select')||document.querySelector('.viewer')) return;
   if(e.key==='/'){e.preventDefault();$('#q').focus();return}
+  if((e.key==='c'||e.key==='с')&&!e.ctrlKey&&!e.metaKey&&S.view==='pick'){ const its=pickChecked(); if(its.length) copyNext(its); return }
   if(S.view!=='topic') return;
+  if((e.key==='c'||e.key==='с')&&!e.ctrlKey&&!e.metaKey&&S.tab==='img'){ copyNext(topicItems(BYID[S.sel])); }
   if(e.key==='ArrowRight') step(1); if(e.key==='ArrowLeft') step(-1);
+  if((e.key==='c'||e.key==='с')&&!e.ctrlKey&&!e.metaKey&&S.view==='pick'){ const its=pickChecked(); if(its.length) copyNext(its); return }
 });
 function bindDrop(){const d=$('#drop'); if(!d) return;
   d.addEventListener('dragover',e=>{e.preventDefault();d.classList.add('drag')});
